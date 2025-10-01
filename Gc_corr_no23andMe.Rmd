@@ -1,0 +1,353 @@
+---
+title: "GC GWAS corrleated model_no23andMe"
+author: "Diego Londono"
+date: "2024-09-13"
+output: html_document
+---
+
+
+```{r clean chunks wd, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM")
+getwd()
+library(devtools)
+install_github("JaFuenteC/GenomicSEM", ref = "glsintegration_test")
+
+library(GenomicSEM)
+```
+
+
+
+```{r setup, include=FALSE}
+
+
+library(GenomicSEM)
+library(data.table)
+
+
+#==============================================================================#
+# Step -1: Clean data
+#==============================================================================#
+#working directory on laptop
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/") 
+
+```
+
+```{r LDSC}
+#==============================================================================#
+# Step 0: Set input variables and arguments
+#==============================================================================#
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/") 
+
+#set paths to reference data.
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+#### RUNNING GENOMIC SEM  LDSC
+
+#==============================================================================#
+# Step 2: Run multivariable LDSC
+#==============================================================================#
+#set sample size for input traits.
+sample.prev <-     c(NA,NA,NA,NA,NA,NA,NA,NA)
+population.prev <- c(NA,NA,NA,NA,NA,NA,NA,NA)
+
+#set names for input traits.
+trait.names = c("REACTION_TIME",
+                "MATRIX",
+                "TRAILS",
+                "TOWER",
+                "VNR",
+                "Lang1",
+                "VOC_PIC",
+                "EA4_wo_23andMe")
+
+
+
+#set names of munged traits
+traits = c("REACTION_TIME.sumstats.gz",
+           "MATRIX.sumstats.gz",
+           "TRAILS.sumstats.gz",
+           "TOWER.sumstats.gz",
+           "VNR.sumstats.gz",
+           "VOC_PIC.sumstats.gz",
+           "Lang1.sumstats.gz",
+           "EA4_wo_23.sumstats.gz")
+
+
+#To have enough buffer size for this analysis
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+
+##run multivariable LDSC
+LDSCoutput <- ldsc(traits = traits,
+                   sample.prev = sample.prev,
+                   population.prev = population.prev,
+                   ld = ld,
+                   wld = wld,
+                   trait.names = trait.names,
+                   stand = TRUE)
+
+##optional command to save the ldsc output in case you want to use it in a later R session.
+
+saveRDS(LDSCoutput,file="Model_SNP_effects/Gc/Corr_model/no23andme/LDSCoutput_no23.rds")
+LDSCoutput  <- readRDS("Model_SNP_effects/Gc/Corr_model/no23andme/LDSCoutput_no23.rds")
+
+#Save S matrix heritabilities
+write.csv (LDSCoutput$S, 'Model_SNP_effects/Gc/Corr_model/no23andme/LDSC_Matrix_S.csv' , row.names = F)
+
+#Save Intercepts
+write.csv (LDSCoutput$I, 'Model_SNP_effects/Gc/Corr_model/no23andme/LDSC_Matrix_I.csv' , row.names = F)
+
+#Save S standarized matrix 
+write.csv (LDSCoutput$S_Stand, 'Model_SNP_effects/Gc/Corr_model/no23andme/LDSC_Matrix_S_stand.csv' , row.names = F)
+
+
+
+```
+
+
+```{r LDSC, include=FALSE}
+
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+LDSCoutput  <- readRDS("Model_SNP_effects/Gc/Corr_model/no23andme/LDSCoutput_no23.rds")
+
+```
+
+```{r model unit loading - loadings}
+
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/") 
+
+#Unit Loading identification
+model_uload <-'#Unit Loading identification 
+
+ #Factors
+       REACTION_TIME~~Gf 
+       REACTION_TIME~~Gc
+       REACTION_TIME~~EA4_wo_23andMe
+       Gf=~ 1*MATRIX + TRAILS + TOWER + VNR
+       Gc=~ 1*VOC_PIC + VNR + Lang1
+       EA4_wo_23andMe~~Gf 
+       EA4_wo_23andMe~~Gc'
+
+
+model_uload <- usermodel(LDSCoutput,estimation="DWLS",model=model_uload)
+model_uload$modelfit
+model_uload$results 
+#      chisq df      p_chisq      AIC       CFI       SRMR
+#df	75.93307	15	3.839022e-10	117.9331	0.9906395	0.06393737
+write.csv(model_uload$results, 'Model_SNP_effects/Gc/Corr_model/no23andme/model_uload.csv', row.names = F)
+model_uload$results 
+```
+
+
+```{r LDSC2 SNP effects, include=FALSE, echo=FALSE}
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/") 
+
+
+#Prepare data LDSC
+
+# NEW LDSCS, without external traits Y vector. For GWAS, model with SNP effects
+#set paths to reference data.
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+## prepare sumstats ##
+#set sample size for input traits.
+
+#set names for input traits.
+trait.names = c("REACTION_TIME",
+                "MATRIX",
+                "TRAILS",
+                "TOWER",
+                "VNR",
+                "Lang1",
+                "VOC_PIC",
+                "EA4_wo_23andMe")
+
+
+
+#set names of munged traits
+traits = c("REACTION_TIME.sumstats.gz",
+           "MATRIX.sumstats.gz",
+           "TRAILS.sumstats.gz",
+           "TOWER.sumstats.gz",
+           "VNR.sumstats.gz",
+           "VOC_PIC.sumstats.gz",
+           "Lang1.sumstats.gz",
+           "EA4_wo_23.sumstats.gz")
+
+
+N=c(330024,11356,78547,11263,171304,28337,28269,765283)
+
+
+##run multivariable LDSC
+
+
+#set sample size for input traits.
+sample.prev <-     c(NA,NA,NA,NA,NA,NA,NA,NA)
+population.prev <- c(NA,NA,NA,NA,NA,NA,NA,NA)
+
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+LDSCoutput2 <- ldsc(traits = traits,
+                    sample.prev = sample.prev,
+                    population.prev = population.prev,
+                    ld = ld,
+                    wld = wld,
+                    trait.names = trait.names,
+                    stand = TRUE)
+
+##optional command to save the ldsc output in case you want to use it in a later R session.
+
+save(LDSCoutput2, file="Model_SNP_effects/Gc/Corr_model/no23andme/LDSCoutput2.RData")
+LDSCoutput2 <- load("Model_SNP_effects/Gc/Corr_model/no23andme/LDSCoutput2.RData")
+
+```
+
+
+
+
+
+```{r model sumstats, include= False}
+
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+
+# NEW LDSCS, without external traits Y vector. For GWAS, model with SNP effects
+#set paths to reference data.
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+## prepare sumstats ##
+## Traits without Y factor
+
+files = c("rt_sum",
+          "matrix_sum",
+          "trails_sum",
+          "tower_sum",
+          "vnr_sum",
+          "voc_pic_sum",
+          "Model_SNP_effects/LANG/Lang1_sum",
+          "ea4_wo_23andme_sum")
+
+#set names for input traits.
+trait.names = c("REACTION_TIME",
+                "MATRIX",
+                "TRAILS",
+                "TOWER",
+                "VNR",
+                "VOC_PIC",
+                "Lang1",
+                "EA4_wo_23andMe")
+
+
+#set names of munged traits
+traits = c("REACTION_TIME.sumstats.gz",
+           "MATRIX.sumstats.gz",
+           "TRAILS.sumstats.gz",
+           "TOWER.sumstats.gz",
+           "VNR.sumstats.gz",
+           "VOC_PIC.sumstats.gz",
+           "Lang1.sumstats.gz",
+           "EA4_wo_23.sumstats.gz")
+
+
+N=c(330024,11356,78547,11263,171304,28337,28269,765283)
+
+## Prepare Summary statistics for GWAS
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+
+
+se.logit = c(F,F,F,F,F,F,F,F)
+OLS = c(T,T,T,T,T,T,T,T)
+linprob = c(F,F,F,F,F,F,F,F)
+
+
+model_sumstats <- sumstats(files = files,
+                           ref = ref,
+                           trait.names = trait.names,
+                           se.logit = se.logit,
+                           OLS = OLS,
+                           linprob = linprob,
+                           N = N,
+                           info.filter = info.filter,
+                           maf.filter = maf.filter,
+                           keep.indel = FALSE,
+                           parallel = FALSE,
+                           cores = NULL)
+
+saveRDS(model_sumstats,file="Model_SNP_effects/Gc/Corr_model/no23andme/model_sumstats.rds")
+model_sumstats <- readRDS("Model_SNP_effects/Gc/Corr_model/no23andme/model_sumstats.rds")
+
+write.table(x = model_sumstats, file = "Model_SNP_effects/Gc/Corr_model/no23andme/model_sumstats.txt",
+            quote = F, sep = " ",row.names = F, col.names = T)
+
+
+```
+
+model_sumstats <- readRDS("Model_SNP_effects/Gc/Corr_model/no23andme/model_sumstats.rds")
+SUMSTATS <- model_sumstats[20,]   
+
+```{r model SNP effects, include= False}
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/Model_SNP_effects/Gc/Corr_model/no23andme/") 
+
+#Unit Loading identification
+
+model <-'#Unit Loading identification, Model with SNP effects
+
+       #Factors
+       REACTION_TIME~~Gf 
+       REACTION_TIME~~Gc
+       REACTION_TIME~~EA4_wo_23andMe
+       Gf=~ 1*MATRIX + TRAILS + TOWER + VNR
+       Gc=~ 1*VOC_PIC + VNR +Lang1
+       EA4_wo_23andMe~~Gf 
+       EA4_wo_23andMe~~Gc
+       Gf~~Gc
+
+       #SNP effects    
+       Gf ~ SNP
+       Gc ~ SNP'
+
+#specify what parts of the model you want to save
+sub<-c('Gf ~ SNP','Gc~ SNP')
+
+load("LDSCoutput2.RData")
+model_sumstats <- readRDS("model_sumstats.rds")
+
+
+##################################################################################
+############################### RUN USERGWAS WITH ANALYTIC ESTIMATOR  ###################################
+#########################################################################################################
+
+
+
+
+#########################################################################################################
+############################### RUN USERGWAS WITH ANALYTIC ESTIMATOR  ###################################
+#########################################################################################################
+
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+
+
+results<-userGWAS(covstruc=LDSCoutput2,SNPs=model_sumstats,model=model,analytic = TRUE, fix_measurement = T,
+                  estimation = "DWLS",sub=sub,smooth_check=TRUE,parallel = F)
+
+
+
+write.table(x = results,file = "GSEM_Cog_Gf_Gc_no23andMe.txt",
+            sep="\t", quote = FALSE, row.names = F)

@@ -1,0 +1,808 @@
+---
+title: "Cog_final_vocabulary"
+author: "Diego Londono"
+date: '2025-Sep-15'
+output: html_document
+---
+
+#==============================================================================#
+# Diego Londono-Correa Using Genomic SEM to explore genetic associations among mental disorders, cognitive abilities, education, and personality
+#==============================================================================#
+
+
+```{r clean chunks wd, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM")
+getwd()
+```
+
+
+```{r setup, include=FALSE}
+
+
+library(GenomicSEM)
+library(data.table)
+
+
+#==============================================================================#
+# Step -1: Clean data
+#==============================================================================#
+#working directory on laptop
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+```
+
+```{r Formatting, include=FALSE}
+
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+GWAS <- fread("Model_SNP_effects/Gc/cholesky_model/Cholesky_Cog_clean.csv", data.table=FALSE)
+RT <- GWAS[,c(1:6,12:15)]
+colnames(RT)[10]<-"P"
+write.table(RT, file = 'RT_sum', row.names = F)
+
+Gf <- GWAS[,c(23:28,34:37)]
+colnames(Gf)<-colnames(RT)
+write.table(Gf, file = 'Gf_cholesky_sum', row.names = F)
+
+Gc_cholesky <- GWAS[,c(45:50,56:59)]
+colnames(Gc_cholesky)<-colnames(RT)
+write.table(Gc_cholesky, file = 'Gc_cholesky_sum', row.names = F)
+
+NC <- GWAS[,c(67:72,78:81)]
+colnames(NC)<-colnames(RT)
+colnames(Gc_simple)<-colnames(RT)
+write.table(NC, file = 'NC_sum', row.names = F)
+
+Gc_simple <- fread("Model_SNP_effects/Gc/Simple_model/Gc_simple_sum", data.table=FALSE)
+Gc_simple <- Gc_simple[,c(2:7,13:16)]
+colnames(Gc_simple)<-colnames(RT)
+write.table(Gc_simple, file = 'Gc_simple_sum', row.names = F)
+
+
+GWAS_corr <- fread("Model_SNP_effects/Gc/Corr_model/Correlated_Cog_clean.csv", data.table=FALSE)
+Gf_corr <- GWAS_corr[,c(23:28,34:37)]
+colnames(Gf_corr)<-colnames(RT)
+write.table(Gf_corr, file = 'Gf_corr_sum', row.names = F)
+
+Gc_corr <- GWAS_corr[,c(45:50,56:59)]
+colnames(Gc_corr)<-colnames(RT)
+write.table(Gc_corr, file = 'Gc_corr_sum', row.names = F)
+
+
+```
+
+
+##Fast load
+
+```{r sumstats fast load,include=FALSE}
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+   ## Fast load sum
+   
+   RT_sum <- fread("RT_sum", data.table=FALSE)
+   Gf_cholesky_sum <- fread("Gf_cholesky_sum", data.table=FALSE)
+   Gc_cholesky_sum <- fread("Gc_cholesky_sum", data.table=FALSE)
+   NC_sum <- fread("NC_sum", data.table=FALSE)
+   Gf_corr_sum <- fread("Gf_corr_sum", data.table=FALSE)
+   Gc_corr_sum <- fread("Gc_corr_sum", data.table=FALSE)
+   
+     ## External traits
+      
+      scz <- fread("scz_sum", data.table=FALSE)
+      bip <- fread("bip_sum", data.table=FALSE)
+      aut <- fread("aut_sum", data.table=FALSE)
+      adhd <- fread("adhd_sum", data.table=FALSE)
+      alz <- fread("AD_IGAP_II_NOAPOE.sumstats.gz", data.table=FALSE)
+
+      #Personality 
+      open <- fread('open_sum', data.table = F)
+      con <- fread('con_sum', data.table = F)
+      extr <- fread('extr_sum', data.table = F)
+      agre <- fread('agree_sum', data.table = F)      
+      neu <- fread('neu_sum', data.table = F)
+```
+
+#### RUNNING GENOMIC SEM  Munge  
+
+```{r munge, include=FALSE}
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+#==============================================================================#
+# Step 0: Set input variables and arguments
+#==============================================================================#
+
+#set paths to reference data.
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+#note: the following vectors will refer to the input variables in the same order.
+#note: the following code assumes that sample size is reported in the sumstats.
+#identify the summary statistics to be used as input for Genomic SEM analyses.
+
+
+files = c("RT_sum",
+          "Gf_cholesky_sum",
+          "Gc_cholesky_sum",
+          "NC_sum",
+          "Gf_corr_sum",
+          "Gc_corr_sum")
+
+#set names for input traits.
+trait.names = c("RT",
+                "Gf_cholesky",
+                "Gc_cholesky",
+                "NC",
+                "Gf_corr",
+                "Gc_corr")
+
+
+#set names of munged traits
+traits = c("RT.sumstats.gz",
+           "Gf_cholesky.sumstats.gz",
+           "Gc_cholesky.sumstats.gz",
+           "NC.sumstats.gz",
+           "Gf_corr.sumstats.gz",
+           "Gc_corr.sumstats.gz")
+
+
+N=c(330024, 117623, 172256,  596945, 89587, 438528)
+
+#==============================================================================#
+# Step 1: Munge the summary statistics
+#==============================================================================#
+
+
+##munge the summary statistics files##
+##note that we include the argument names (e.g., files, hm3) for
+##completeness in the code below, but that this is not necessary to run the code.
+munge(files = files,
+      hm3 = hm3,
+      N = N,
+      trait.names = trait.names,
+      info.filter = info.filter,
+      maf.filter = maf.filter)
+```
+
+#### RUNNING GENOMIC SEM  LDSC
+
+
+
+```{r LDSC, include=FALSE}
+
+#==============================================================================#
+# Step 2: Run multivariable LDSC
+#==============================================================================#
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+###LDSC with external traits
+
+#set names for input traits.
+trait.names = c("RT",
+                "Gf_cholesky",
+                "Gc_cholesky",
+                "NC",
+                "Gf_corr",
+                "Gc_corr",
+                "SCZ",
+                "BIP",
+                "AUT",
+                "ADHD",
+                "ALZ",
+                "OP",
+                "CON",
+                "AGRE",
+                "EXTR",
+                "NEU")
+
+
+
+#set names of munged traits
+traits = c("RT.sumstats.gz",
+           "Gf_cholesky.sumstats.gz",
+           "Gc_cholesky.sumstats.gz",
+           "NC.sumstats.gz",
+           "Gf_corr.sumstats.gz",
+           "Gc_corr.sumstats.gz",
+           "SCZ.sumstats.gz",
+           "BIP.sumstats.gz",
+           "AUT.sumstats.gz",
+           "ADHD.sumstats.gz",
+           "AD_IGAP_II_NOAPOE.sumstats.gz",
+           "OP.sumstats.gz",
+           "CON.sumstats.gz",
+           "AGRE.sumstats.gz",
+           "EXTR.sumstats.gz",
+           "NEU.sumstats.gz")
+
+
+
+
+#set sample size for input traits.
+#8 cog-ea cotinuous sumstats, 5 psych disroders with calc Neff used as input, 2 personality, 4 language indicators
+sample.prev <-     c(NA,NA,NA,NA,NA,NA,0.5,0.5,0.5,0.5,0.5,NA,NA,NA,NA,NA)
+population.prev <- c(NA,NA,NA,NA,NA,NA,0.01,0.02,0.012,0.05,0.05,NA,NA,NA,NA,NA)
+
+
+#To have enough buffer size for this analysis
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+
+##run multivariable LDSC
+LDSCoutput <- ldsc(traits = traits,
+                   sample.prev = sample.prev,
+                   population.prev = population.prev,
+                   ld = ld,
+                   wld = wld,
+                   trait.names = trait.names,
+                   stand = TRUE)
+
+##optional command to save the ldsc output in case you want to use it in a later R session.
+
+saveRDS(LDSCoutput,file="LDSCoutput.rds")
+#LDSCoutput  <- readRDS("LDSCoutput.rds")
+
+#Save S matrix heritabilities
+rownames(LDSCoutput$S) <- trait.names 
+colnames(LDSCoutput$S) <- trait.names
+write.csv (LDSCoutput$S, 'LDSC_Matrix_S.csv' , row.names = T)
+
+#Save Intercepts
+rownames(LDSCoutput$I) <- trait.names 
+colnames(LDSCoutput$I) <- trait.names
+write.csv (LDSCoutput$I, 'LDSC_Matrix_I.csv' , row.names = T)
+
+
+#Save S standarized matrix 
+write.csv (LDSCoutput$S_Stand, 'LDSC_Matrix_S_stand.csv' , row.names = F)
+
+
+k<-nrow(LDSCoutput$S)
+SE<-matrix(0, k, k)
+SE[lower.tri(SE,diag=TRUE)] <-sqrt(diag(LDSCoutput$V))
+SE[upper.tri(SE)] <- t(SE)[upper.tri(SE)]
+rownames(SE) <- trait.names 
+colnames(SE) <- trait.names
+write.csv (SE, 'SE.csv' , row.names = T)
+
+
+k<-nrow(LDSCoutput$S_Stand)
+SE_stand<-matrix(0, k, k)
+SE_stand[lower.tri(SE_stand,diag=TRUE)] <-sqrt(diag(LDSCoutput$V_Stand))
+SE_stand[upper.tri(SE_stand)] <- t(SE_stand)[upper.tri(SE_stand)]
+rownames(SE_stand) <- trait.names 
+colnames(SE_stand) <- trait.names
+write.csv (SE_stand, 'SE_Stand.csv' , row.names = T)
+
+
+
+```
+
+```{r LDSC, include=FALSE}
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+LDSCoutput  <- readRDS("LDSCoutput.rds")
+```
+
+#### RUNNING GENOMIC SEM  Model without SNP effects
+
+      #RT
+      #Gf_cholesky
+      #Gc_cholesky
+      #NC
+      #Gf_corr
+      #Gc_corr
+      
+
+    ```{r model unit variance - loadings}
+    setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+             #### Models correlation with traits Y vector 
+         
+         model_2.2.1 <-'#Correlation of Factors with SCZ
+         #Factors
+         
+         SCZ ~~ RT
+         SCZ ~~ Gf_cholesky
+         SCZ ~~ Gc_cholesky 
+         SCZ ~~ NC
+         SCZ ~~ Gf_corr
+         SCZ ~~ Gc_corr'
+
+         output2.2.1 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.1)
+         output2.2.1$modelfit
+         output2.2.1$results
+         write.csv(output2.2.1$results, 'output2.2.1.csv', row.names = F)
+         
+         model_2.2.2 <-'#Correlation of Factors with BIP
+         #Factors
+         
+         BIP ~~ RT
+         BIP ~~ Gf_cholesky
+         BIP ~~ Gc_cholesky 
+         BIP ~~ NC
+         BIP ~~ Gf_corr
+         BIP ~~ Gc_corr'
+
+         output2.2.2 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.2)
+         output2.2.2$modelfit
+         output2.2.2$results
+         write.csv(output2.2.2$results, 'output2.2.2.csv', row.names = F)
+         
+         model_2.2.3 <-'#Correlation of Factors with AUT
+         #Factors
+         
+         AUT ~~ RT
+         AUT ~~ Gf_cholesky
+         AUT ~~ Gc_cholesky 
+         AUT ~~ NC
+         AUT ~~ Gf_corr
+         AUT ~~ Gc_corr'
+
+         output2.2.3 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.3)
+         output2.2.3$modelfit
+         output2.2.3$results
+         write.csv(output2.2.3$results, 'output2.2.3.csv', row.names = F)
+         
+         model_2.2.4 <-'#Correlation of Factors with ADHD
+         #Factors
+         
+         ADHD ~~ RT
+         ADHD ~~ Gf_cholesky
+         ADHD ~~ Gc_cholesky 
+         ADHD ~~ NC
+         ADHD ~~ Gf_corr
+         ADHD ~~ Gc_corr'
+
+         output2.2.4 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.4)
+         output2.2.4$modelfit
+         output2.2.4$results
+         write.csv(output2.2.4$results, 'output2.2.4.csv', row.names = F)
+         
+         
+         model_2.2.5 <-'#Correlation of Factors with ALZ
+         #Factors
+         
+         ALZ ~~ RT
+         ALZ ~~ Gf_cholesky
+         ALZ ~~ Gc_cholesky 
+         ALZ ~~ NC
+         ALZ ~~ Gf_corr
+         ALZ ~~ Gc_corr'
+
+         output2.2.5 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.5)
+         output2.2.5$modelfit
+         output2.2.5$results
+         write.csv(output2.2.5$results, 'output2.2.5.csv', row.names = F)
+         
+         model_2.2.6 <-'#Correlation of Factors with OP
+         #Factors
+         
+         OP ~~ RT
+         OP ~~ Gf_cholesky
+         OP ~~ Gc_cholesky 
+         OP ~~ NC
+         OP ~~ Gf_corr
+         OP ~~ Gc_corr'
+
+         output2.2.6 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.6)
+         output2.2.6$modelfit
+         output2.2.6$results
+         write.csv(output2.2.6$results, 'output2.2.6.csv', row.names = F)
+         
+         model_2.2.7 <-'#Correlation of Factors with CON
+         #Factors
+         
+         CON ~~ RT
+         CON ~~ Gf_cholesky
+         CON ~~ Gc_cholesky 
+         CON ~~ NC
+         CON ~~ Gf_corr
+         CON ~~ Gc_corr'
+
+         output2.2.7 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.7)
+         output2.2.7$modelfit
+         output2.2.7$results
+         write.csv(output2.2.7$results, 'output2.2.7.csv', row.names = F)
+         
+         model_2.2.8 <- 'AGRE ~~ RT
+         AGRE ~~ Gf_cholesky
+         AGRE ~~ Gc_cholesky 
+         AGRE ~~ NC
+         AGRE ~~ Gf_corr
+         AGRE ~~ Gc_corr'
+
+         output2.2.8 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.8)
+         output2.2.8$modelfit
+         output2.2.8$results
+         write.csv(output2.2.8$results, 'output2.2.8.csv', row.names = F)
+         
+         
+         model_2.2.9 <-  'EXTR ~~ RT
+         EXTR ~~ Gf_cholesky
+         EXTR ~~ Gc_cholesky 
+         EXTR ~~ NC
+         EXTR ~~ Gf_corr
+         EXTR ~~ Gc_corr'
+
+         output2.2.9 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.9)
+         output2.2.9$modelfit
+         output2.2.9$results
+         write.csv(output2.2.9$results, 'output2.2.9.csv', row.names = F)
+         
+         
+         model_2.2.10 <- 'NEU ~~ RT
+         NEU ~~ Gf_cholesky
+         NEU ~~ Gc_cholesky 
+         NEU ~~ NC
+         NEU ~~ Gf_corr
+         NEU ~~ Gc_corr'
+
+         output2.2.10 <- usermodel(LDSCoutput,estimation="DWLS",model=model_2.2.10)
+         output2.2.10$modelfit
+         output2.2.10$results
+         write.csv(output2.2.10$results, 'output2.2.10.csv', row.names = F)         
+         
+         
+         
+```
+    
+    
+    ```{r table based on output Genomic SEM, include=FALSE}
+    setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM") 
+
+## Genetic Correlations with external traits
+
+      # create matrix with 4 columns and 4 rows
+      Corr <- matrix(NA, ncol = 18, nrow = 10)
+      # specify the column names and row names of matrix
+      colnames(Corr) = c('RT_E','Gf_cholesky_E','Gc_cholesky_E','NC_E','Gf_corr_E','Gc_corr_E','RT_SE','Gf_cholesky_SE','Gc_cholesky_SE','NC_SE','Gf_corr_SE','Gc_corr_SE','RT_P','Gf_P','Gc_P','NC_P','Gf_corr_P','Gc_corr_P')
+      rownames(Corr) <- c('SCZ','BIP','AUT','ADHD','ALZ','OP','CON','AGRE','EXTR','NEU')
+      # assign to table
+      Corr=as.table(Corr)
+      # display
+      Corr
+      
+                #SCZ
+
+                       SCZ_T <- output2.2.1$results # make a dataframe from output model
+                       
+                       #Values
+                       SCZ_T[SCZ_T$lhs == 'SCZ' & SCZ_T$rhs != 'SCZ', c(3,6,7,9)]
+                       
+                       Corr[1,1:18] <- unlist(SCZ_T[SCZ_T$lhs == 'SCZ' & SCZ_T$rhs != 'SCZ', c(6,7,9)])
+                       
+                 #BIP
+
+                       BIP_T <- output2.2.2$results # make a dataframe from output model
+                       
+                       #Values
+                       BIP_T[BIP_T$lhs == 'BIP' & BIP_T$rhs != 'BIP', c(3,6,7,9)]
+                       
+                       Corr[2,1:18] <- unlist(BIP_T[BIP_T$lhs == 'BIP' & BIP_T$rhs != 'BIP', c(6,7,9)])
+
+                #AUT
+
+                       AUT_T <- output2.2.3$results # make a dataframe from output model
+                       
+                       #Values
+                       AUT_T[AUT_T$lhs == 'AUT' & AUT_T$rhs != 'AUT', c(3,6,7,9)]
+                       
+                       Corr[3,1:18] <- unlist(AUT_T[AUT_T$lhs == 'AUT' & AUT_T$rhs != 'AUT', c(6,7,9)])
+
+                #ADHD
+
+                       ADHD_T <- output2.2.4$results # make a dataframe from output model
+                       
+                       #Values
+                       ADHD_T[ADHD_T$lhs == 'ADHD' & ADHD_T$rhs != 'ADHD', c(3,6,7,9)]
+                       
+                       Corr[4,1:18] <- unlist(ADHD_T[ADHD_T$lhs == 'ADHD' & ADHD_T$rhs != 'ADHD', c(6,7,9)])
+
+                #ALZ
+
+                       ALZ_T <- output2.2.5$results # make a dataframe from output model
+                       
+                       #Values
+                       ALZ_T[ALZ_T$lhs == 'ALZ' & ALZ_T$rhs != 'ALZ', c(3,6,7,9)]
+                       
+                       Corr[5,1:18] <- unlist(ALZ_T[ALZ_T$lhs == 'ALZ' & ALZ_T$rhs != 'ALZ', c(6,7,9)])
+
+                #OP
+
+                       OP_T <- output2.2.6$results # make a dataframe from output model
+                       
+                       #Values
+                       OP_T[OP_T$lhs == 'OP' & OP_T$rhs != 'OP', c(3,6,7,9)]
+                       
+                       Corr[6,1:18] <- unlist(OP_T[OP_T$lhs == 'OP' & OP_T$rhs != 'OP', c(6,7,9)])
+
+                #CON
+
+                       CON_T <- output2.2.7$results # make a dataframe from output model
+                       
+                       #Values
+                       CON_T[CON_T$lhs == 'CON' & CON_T$rhs != 'CON', c(3,6,7,9)]
+                       
+                       Corr[7,1:18] <- unlist(CON_T[CON_T$lhs == 'CON' & CON_T$rhs != 'CON', c(6,7,9)])
+
+                #AGRE
+
+                       AGRE_T <- output2.2.8$results # make a dataframe from output model
+                       
+                       #Values
+                       AGRE_T[AGRE_T$lhs == 'AGRE' & AGRE_T$rhs != 'AGRE', c(3,6,7,9)]
+                       
+                       Corr[8,1:18] <- unlist(AGRE_T[AGRE_T$lhs == 'AGRE' & AGRE_T$rhs != 'AGRE', c(6,7,9)])
+                       
+                #EXTR
+
+                       EXTR_T <- output2.2.9$results # make a dataframe from output model
+                       
+                       #Values
+                       EXTR_T[EXTR_T$lhs == 'EXTR' & EXTR_T$rhs != 'EXTR', c(3,6,7,9)]
+                       
+                       Corr[9,1:18] <- unlist(EXTR_T[EXTR_T$lhs == 'EXTR' & EXTR_T$rhs != 'EXTR', c(6,7,9)])           
+                       
+                #NEU
+
+                       NEU_T <- output2.2.10$results # make a dataframe from output model
+                       
+                       #Values
+                       NEU_T[NEU_T$lhs == 'NEU' & NEU_T$rhs != 'NEU', c(3,6,7,9)]
+                       
+                       Corr[10,1:18] <- unlist(NEU_T[NEU_T$lhs == 'NEU' & NEU_T$rhs != 'NEU', c(6,7,9)])                       
+                       
+                       
+                       
+                  ### Make it a Table
+                       Corr.table <- as.table(Corr)  
+
+                       
+                       
+write.csv(Corr.table, file = "Corr.table_Sep_2025.csv")                                              
+
+Corr.table 
+
+```
+
+######### WHAT IS BELOW, IS JUST EXPLORATORY, THE MODELS WITH SNP EFFECTS ARE ON THE SCRIPTS IN THE MODEL_SNP EFFECTS FOLDER
+
+
+```{r model unit loading - loadings}
+#Unit Loading identification
+model_uload_withLang <-'#Unit Loading identification, Cholesky model without external traits Y vector 
+
+ #Factors
+       LANG=~ 1*W_R + NW_R + start(0.4)*SPELL + PHON 
+       
+       RT=~ 1*REACTION_TIME + NA*EA4  + VNR + VOC_SYN + VOC_PIC + LANG + MATRIX + TRAILS + TOWER
+       Gf=~ 1*MATRIX + TRAILS + TOWER + VNR + VOC_SYN + VOC_PIC + LANG + EA4
+       Gc=~ 1*VOC_SYN + VOC_PIC + VNR + LANG + EA4
+       NC=~ 1*EA4
+       #covarariances” set to 0
+       #covariances factors
+       NC~~0*Gc
+       NC~~0*Gf
+       NC~~0*RT
+       Gc~~0*Gf
+       Gc~~0*RT
+       Gf~~0*RT
+       #variance indicators
+       REACTION_TIME  ~~ 0*REACTION_TIME
+       EA4 ~~ 0*EA4'
+
+
+
+model_uload_withLang <- usermodel(LDSCoutput,estimation="DWLS",model=model_uload_withLang)
+model_uload_withLang$modelfit
+write.csv(model_uload_withLang$results, 'model_uload_withLang.csv', row.names = F)
+
+```
+
+```{r model unit loading - loadings}
+#Unit Loading identification
+model_just_Gc<-'#Unit Loading identification, Cholesky model without external traits Y vector 
+
+ #Factors
+       LANG=~ 1*W_R + NW_R + start(0.4)*SPELL + PHON 
+       
+       Gc=~ 1*VOC_SYN + VOC_PIC + LANG'
+
+
+
+model_just_Gc <- usermodel(LDSCoutput,estimation="DWLS",model=model_just_Gc)
+model_just_Gc$modelfit
+write.csv(model_just_Gc$results, 'model_just_Gc.csv', row.names = F)
+
+```
+
+### LDSC for SNP effects
+```{r LDSC2 SNP effects, include=FALSE, echo=FALSE}
+
+
+#Prepare data LDSC
+
+# NEW LDSCS, without external traits Y vector. For GWAS, model with SNP effects
+#set paths to reference data.
+hm3 = "w_hm3.snplist"
+ld = "eur_w_ld_chr/"
+wld = "eur_w_ld_chr/"
+ref = "reference.1000G.maf.0.005.txt"
+#set SNP filters for analysis.
+info.filter = 0.90
+maf.filter = 0.01
+
+## prepare sumstats ##
+## Traits without Y factor
+
+files = c("rt_sum",
+          "matrix_sum",
+          "trails_sum",
+          "tower_sum",
+          "vnr_sum",
+          "voc_syn_sum",
+          "voc_pic_sum",
+          "ea4_sum",
+          "nread_sum",
+          "wr_sum",
+          "sp_sum",
+          "pa_sum")
+
+#set names for input traits.
+trait.names = c("REACTION_TIME",
+                "MATRIX",
+                "TRAILS",
+                "TOWER",
+                "VNR",
+                "VOC_SYN",
+                "VOC_PIC",
+                "EA4",
+                "NW_R",
+                "W_R",
+                "SPELL",
+                "PHON")
+
+
+
+#set names of munged traits
+traits = c("REACTION_TIME.sumstats.gz",
+           "MATRIX.sumstats.gz",
+           "TRAILS.sumstats.gz",
+           "TOWER.sumstats.gz",
+           "VNR.sumstats.gz",
+           "VOC_SYN.sumstats.gz",
+           "VOC_PIC.sumstats.gz",
+           "EA4.sumstats.gz",
+           "NW_R.sumstats.gz",
+           "W_R.sumstats.gz",
+           "SPELL.sumstats.gz",
+           "PHON.sumstats.gz")
+
+
+#set Neff calculated according to the formula proposed in https://www.medrxiv.org/content/10.1101/2021.09.22.21263909v1 
+#Pervasive Downward Bias in Estimates of Liability Scale Heritability in GWAS Meta-Analysis: A Simple Solution 
+#Language N is set to NA to make GSEM take from the sumstats
+N=c(330024,11356,78547,11263,171304,188434,28337,3037499,NA,NA,NA,NA)
+
+
+##run multivariable LDSC
+
+##run multivariable LDSC
+
+#set sample size for input traits.
+sample.prev <-     c(NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA)
+population.prev <- c(NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA)
+
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 6) 
+LDSCoutput2 <- ldsc(traits = traits,
+                    sample.prev = sample.prev,
+                    population.prev = population.prev,
+                    ld = ld,
+                    wld = wld,
+                    trait.names = trait.names,
+                    stand = TRUE)
+
+##optional command to save the ldsc output in case you want to use it in a later R session.
+
+save(LDSCoutput2, file="LDSCoutput2.RData")
+LDSCoutput2 <- load("LDSCoutput2.RData")
+
+
+```
+
+
+
+```{r model sumstats, include= False}
+
+
+N=c(330024,11356,78547,11263,171304,188434,28337,3037499,NA,NA,NA,NA)
+
+## Prepare Summary statistics for GWAS
+
+se.logit = c(F,F,F,F,F,F,F,F,F,F,F,F)
+OLS = c(T,T,T,T,T,T,T,T,T,T,T,T)
+linprob = c(F,F,F,F,F,F,F,F,F,F,F,F)
+
+
+model_sumstats <- sumstats(files = files,
+                           ref = ref,
+                           trait.names = trait.names,
+                           se.logit = se.logit,
+                           OLS = OLS,
+                           linprob = linprob,
+                           N = N,
+                           info.filter = info.filter,
+                           maf.filter = maf.filter,
+                           keep.indel = FALSE,
+                           parallel = FALSE,
+                           cores = NULL)
+
+saveRDS(model_sumstats,file="model_sumstats.rds")
+model_sumstats <- readRDS("model_sumstats.rds")
+
+write.table(x = model_sumstats, file = "model_sumstats.txt",
+            quote = F, sep = " ",row.names = F, col.names = T)
+
+
+
+```
+
+
+```{r model SNP effects, include= False}
+
+#Unit Loading identification
+
+model_snps <-'#Unit Loading identification, Model with SNP effects
+
+       #Factors
+       RT=~ 1*REACTION_TIME + 0.013977412*EA4 + 0.184280274*VNR + 0.155218429*VOC_SYN +  0.131933847*MATRIX + 0.330817956*TRAILS + 0.269879897*TOWER  
+       Gf=~ 1*MATRIX + 0.428823246*EA4 + 0.735472567*TRAILS + 0.614482973*TOWER + 0.923913369*VNR + 0.430863036*VOC_SYN 
+       Gc=~ 1*VOC_SYN + 0.586067583*VNR + 0.646711037*EA4
+       NC=~ 1*EA4 
+       #covarariances” set to 0
+       #covariances factors
+       NC~~0*Gc
+       NC~~0*Gf
+       NC~~0*RT
+       Gc~~0*Gf
+       Gc~~0*RT
+       Gf~~0*RT
+       #variance indicators
+       REACTION_TIME  ~~ 0*REACTION_TIME
+       EA4 ~~ 0*EA4
+
+       #SNP effects    
+       RT ~ SNP
+       Gf ~ SNP
+       Gc~ SNP
+       NC ~ SNP'
+
+model_sumstats_100000 <- model_sumstats[1:1000,]
+## the whole sumstats was produced using parallel processing on TACC script 3C
+
+
+load("LDSCoutput2.RData")
+
+#specify what parts of the model you want to save
+sub<-c('RT ~ SNP','Gf ~ SNP','Gc~ SNP','NC ~ SNP')
+
+#example. Real was processed on TACC
+GWAS_Run <-userGWAS(covstruc=LDSCoutput2,SNPs=model_sumstats_100000,model=model_snps,sub=sub,  smooth_check = T)
+
+
+
+```
+
