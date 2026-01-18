@@ -1,0 +1,1105 @@
+---
+title: "FUMA Bioannotation Comparison: Gf_u vs Gc_u"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(pheatmap)
+library(data.table)
+setwd("~/Library/CloudStorage/Box-Box/SEM Project/Genomic_SEM/new_GSEM/Bioannotation")
+```
+
+## Load and compare MAGMA tissue enrichment (GTEx)
+
+
+
+
+```{r}
+
+# Function to load and clean MAGMA .gsa.out files
+load_magma_gsa <- function(file, factor_label) {
+  read_table(file, comment = "#", show_col_types = FALSE, col_types = cols()) %>%
+    rename_with(~ str_trim(.x)) %>%
+    select(VARIABLE, NGENES, BETA, BETA_STD, SE, P) %>%
+    mutate(
+      Factor = factor_label,
+      Z = BETA / SE,
+      P_adjusted_fdr = p.adjust(P, method = "fdr"),
+      P_adjusted_bonf = p.adjust(P, method = "bonferroni")
+    )
+}
+
+
+```
+
+### Functions Compare MAGMA enrichment between Gf_u and Gc_u
+
+### Recent version of the function May 12 2025
+#Generate .TSV MAGMA expression files 
+
+```{R}
+# List of comparisons 
+file_pairs <- list(
+  list(
+    gf_u = "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+    gc_u = "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+    prefix = "GTEx_detailed"
+  ),
+  list(
+    gf_u = "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+    gc_u = "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+    prefix = "GTEx_general"
+  ),
+  list(
+    gf_u = "FUMA_Results_Gf_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+    gc_u = "FUMA_Results_Gc_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+    prefix = "BS_age"
+  ),
+  list(
+    gf_u = "FUMA_Results_Gf_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+    gc_u = "FUMA_Results_Gc_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+    prefix = "BS_dev"
+  )
+)
+
+# Loop over files
+for (pair in file_pairs) {
+  message("Processing: ", pair$prefix)
+  
+  gf_u <- load_magma_gsa(pair$gf_u, "Gf_u")
+  gc_u <- load_magma_gsa(pair$gc_u, "Gc_u")
+  
+  # Merge and calculate differences
+  CTI <- -0.715  # Set your cross-trait intercept here
+
+  merged <- full_join(
+    gf_u %>% rename_with(~ paste0(.x, "_Gf_u"), -VARIABLE),
+    gc_u %>% rename_with(~ paste0(.x, "_Gc_u"), -VARIABLE),
+    by = "VARIABLE"
+  ) %>%
+  mutate(
+  Z_diff = (BETA_Gf_u - BETA_Gc_u) / sqrt(SE_Gf_u^2 + SE_Gc_u^2 - 2 * CTI * SE_Gf_u * SE_Gc_u),
+  P_diff = 2 * pnorm(-abs(Z_diff))
+    )
+  
+  # Final table
+  final_table <- merged %>%
+    select(
+      VARIABLE,
+      NGENES_Gf_u,
+      BETA_Gf_u, BETA_STD_Gf_u, SE_Gf_u, P_Gf_u, P_adjusted_bonf_Gf_u, P_adjusted_fdr_Gf_u, Z_Gf_u,
+      BETA_Gc_u, BETA_STD_Gc_u, SE_Gc_u, P_Gc_u, P_adjusted_bonf_Gc_u, P_adjusted_fdr_Gc_u, Z_Gc_u,
+      Z_diff, P_diff
+    )
+  
+  # Save
+  write_tsv(final_table, paste0("Gf_u_VS_Gc_u/MAGMA_Gf_u_vs_Gc_u_", pair$prefix, "_merged_style.tsv"))
+}
+```
+
+
+#Generate .png MAGMA expression plots
+
+
+``` {R}
+library(tidyverse)
+library(ggrepel)
+
+# Function to generate the scatterplot
+plot_demange_style <- function(file, output_plot) {
+  df <- read_tsv(file, show_col_types = FALSE)
+  
+  # Highlight significant differences by P_diff threshold (e.g. < 0.05 uncorrected)
+  df <- df %>%
+    mutate(
+      significance = case_when(
+        P_diff < 0.05 ~ "Significant",
+        TRUE ~ "NS"
+      )
+    )
+  
+  p <- ggplot(df, aes(x = BETA_Gc_u, y = BETA_Gf_u)) +
+    geom_abline(linetype = "dashed", color = "gray") +
+    geom_point(aes(color = significance, size = -log10(P_diff))) +
+    geom_text_repel(data = filter(df, P_diff < 0.05),
+                    aes(label = VARIABLE),
+                    max.overlaps = 20, size = 3) +
+    scale_color_manual(values = c("Significant" = "red", "NS" = "gray")) +
+    scale_size_continuous(range = c(2, 6)) +
+    theme_minimal() +
+    labs(
+      title = paste("Demange-style Comparison:", file),
+      x = "MAGMA BETA (Gc_u)", y = "MAGMA BETA (Gf_u)",
+      color = "Δ Z P < 0.05",
+      size = "-log10(P_diff)"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  ggsave(output_plot, plot = p, width = 9, height = 6, dpi = 300)
+}
+
+# Generalized function to compute correlation of two columns
+compute_pearson_corr <- function(df, col1, col2, dataset_label = NULL) {
+  x <- df[[col1]]
+  y <- df[[col2]]
+  
+  if (all(is.na(x)) || all(is.na(y))) {
+    message("One or both columns contain only NAs: cannot compute correlation.")
+    return(NULL)
+  }
+  
+  res <- cor.test(x, y, method = "pearson")
+  if (!is.null(dataset_label)) {
+    cat("Pearson correlation of", col1, "and", col2, "in", dataset_label, ":\n")
+  }
+  cat("  r =", round(res$estimate, 3), "\n  p =", signif(res$p.value, 3), "\n")
+  invisible(res)  # returns result but doesn't print a list to console
+}
+
+# List of generated comparison tables
+files <- list.files("Gf_u_VS_Gc_u", pattern = "MAGMA_Gf_u_vs_Gc_u.*_merged_style.tsv", full.names = TRUE)
+
+# Loop and plot
+for (file in files) {
+  output_plot <- gsub("_merged_style.tsv", "_merged_style_plot.png", file)
+  plot_demange_style(file, output_plot)
+}
+
+
+```
+
+#Generate .png MAGMA expression trends
+
+
+```{R}
+library(tidyverse)
+library(tools)
+
+# If you want SVG output too, install/load svglite:
+ install.packages("svglite")
+ library(svglite)
+
+# ----------------------------
+# Vector-saving helper (Option B)
+# ----------------------------
+save_vector <- function(plot, filename, width = 12, height = 6) {
+  ext <- tools::file_ext(filename) |> tolower()
+
+  if (ext == "pdf") {
+    ggsave(filename, plot = plot, device = "pdf",
+           width = width, height = height, units = "in")
+  } else if (ext == "eps") {
+    ggsave(filename, plot = plot, device = "eps",
+           width = width, height = height, units = "in")
+  } else if (ext == "svg") {
+    ggsave(filename, plot = plot, device = svglite::svglite,
+           width = width, height = height, units = "in")
+  } else {
+    stop("Vector output supported: .pdf, .eps, .svg")
+  }
+}
+
+
+# ----------------------------
+# Load data
+# ----------------------------
+bs_age  <- read_tsv("Gf_u_VS_Gc_u/MAGMA_Gf_u_vs_Gc_u_BS_age_merged_style.tsv", show_col_types = FALSE)
+bs_dev  <- read_tsv("Gf_u_VS_Gc_u/MAGMA_Gf_u_vs_Gc_u_BS_dev_merged_style.tsv", show_col_types = FALSE)
+GTEx_30 <- read_tsv("Gf_u_VS_Gc_u/MAGMA_Gf_u_vs_Gc_u_GTEx_general_merged_style.tsv", show_col_types = FALSE)
+GTEx_54 <- read_tsv("Gf_u_VS_Gc_u/MAGMA_Gf_u_vs_Gc_u_GTEx_detailed_merged_style.tsv", show_col_types = FALSE)
+
+# ----------------------------
+# Stage/tissue orders
+# ----------------------------
+bs_age_order <- c(
+  "8_pcw","9_pcw","12_pcw","13_pcw","16_pcw","17_pcw","19_pcw","21_pcw","24_pcw","26_pcw","37_pcw",
+  "4_mos","10_mos","1_yrs","2_yrs","3_yrs","4_yrs","8_yrs","11_yrs","13_yrs","15_yrs","18_yrs",
+  "19_yrs","21_yrs","23_yrs","30_yrs","36_yrs","37_yrs","40_yrs"
+)
+
+bs_dev_order <- c(
+  "Early_prenatal","Early_mid-prenatal","Late_mid-prenatal","Late_prenatal",
+  "Early_infancy","Late_infancy",
+  "Early_childhood","Late_childhood",
+  "Adolescence","Young_adulthood","Middle_adulthood"
+)
+
+my_colors <- c("Gf_u" = "#5cc5d8", "Gc_u" = "#985f8e")
+
+# ----------------------------
+# Helpers
+# ----------------------------
+format_bs_long <- function(df, order_vec) {
+  df %>%
+    mutate(
+      stage = factor(VARIABLE, levels = order_vec),
+      Gf_u = Z_Gf_u,
+      Gc_u = Z_Gc_u,
+      FDR_Gf_u = P_adjusted_fdr_Gf_u,
+      FDR_Gc_u = P_adjusted_fdr_Gc_u
+    ) %>%
+    select(stage, Gf_u, Gc_u, FDR_Gf_u, FDR_Gc_u) %>%
+    pivot_longer(
+      cols = c(Gf_u, Gc_u),
+      names_to = "GWAS_Model",
+      values_to = "Z_score"
+    ) %>%
+    mutate(
+      FDR = if_else(GWAS_Model == "Gf_u", FDR_Gf_u, FDR_Gc_u),
+      Significant = FDR < 0.05
+    )
+}
+
+format_gtex_long <- function(df) {
+  gtex_order <- df %>% arrange(desc(Z_Gc_u)) %>% pull(VARIABLE)
+  df %>%
+    mutate(
+      stage = factor(VARIABLE, levels = gtex_order),
+      Gf_u = Z_Gf_u,
+      Gc_u = Z_Gc_u,
+      FDR_Gf_u = P_adjusted_fdr_Gf_u,
+      FDR_Gc_u = P_adjusted_fdr_Gc_u
+    ) %>%
+    select(stage, Gf_u, Gc_u, FDR_Gf_u, FDR_Gc_u) %>%
+    pivot_longer(
+      cols = c(Gf_u, Gc_u),
+      names_to = "GWAS_Model",
+      values_to = "Z_score"
+    ) %>%
+    mutate(
+      FDR = if_else(GWAS_Model == "Gf_u", FDR_Gf_u, FDR_Gc_u),
+      Significant = FDR < 0.05
+    )
+}
+
+# ----------------------------
+# Plot GTEx enrichment as bar chart (vector output)
+# ----------------------------
+plot_gtex_bar <- function(df, top_n = 15, facet = TRUE,
+                          exclude_tissues = character(0),
+                          title = "", outfile = "barplot.pdf") {
+
+  df_top <- df %>%
+    arrange(desc(Z_Gc_u)) %>%
+    slice(seq_len(min(top_n, nrow(.)))) %>%
+    filter(!(VARIABLE %in% exclude_tissues))
+
+  brain_keywords <- c("brain", "cortex", "cerebellum", "hippocampus",
+                      "amygdala", "basal", "putamen", "nucleus", "caudate",
+                      "spinal", "substantia", "nigra")
+
+  df_top <- df_top %>%
+    mutate(
+      category = if_else(
+        str_detect(VARIABLE, regex(paste(brain_keywords, collapse = "|"), ignore_case = TRUE)),
+        "Brain", "Non-Brain"
+      )
+    )
+
+  df_long <- df_top %>%
+    mutate(
+      Gf_u = Z_Gf_u,
+      Gc_u = Z_Gc_u,
+      FDR_Gf_u = P_adjusted_fdr_Gf_u,
+      FDR_Gc_u = P_adjusted_fdr_Gc_u
+    ) %>%
+    select(VARIABLE, category, Gf_u, Gc_u, FDR_Gf_u, FDR_Gc_u) %>%
+    pivot_longer(
+      cols = c(Gf_u, Gc_u),
+      names_to  = "Cognitive_Dimension",
+      values_to = "Z_score"
+    ) %>%
+    mutate(
+      FDR         = if_else(Cognitive_Dimension == "Gf_u", FDR_Gf_u, FDR_Gc_u),
+      Significant = FDR < 0.05,
+      Cognitive_Dimension = factor(Cognitive_Dimension, levels = c("Gf_u", "Gc_u"))
+    )
+
+  df_long$VARIABLE <- factor(df_long$VARIABLE, levels = df_top$VARIABLE)
+
+  p <- ggplot(df_long, aes(x = VARIABLE, y = Z_score, fill = Cognitive_Dimension)) +
+    geom_col(
+      position = position_dodge(width = 0.8),
+      width = 0.7,
+      aes(alpha = Significant)
+    ) +
+    scale_fill_manual(values = my_colors, name = "Cognitive Dimension") +
+    scale_alpha_manual(values = c("FALSE" = 0.4, "TRUE" = 1), guide = "none") +
+    labs(
+      title = title,
+      x = "Tissue",
+      y = "Z-statistic (β / SE)",
+      caption = "Opaque bars indicate FDR-adjusted significant enrichment"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+      legend.position = "right",
+      legend.title = element_text(size = 10),
+      plot.margin = margin(t = 1, r = 1, b = 1, l = 4, unit = "cm")
+    )
+
+  # No faceting per your comment; leaving facet argument unused intentionally.
+  # If you want it back, uncomment:
+  # if (facet) p <- p + facet_wrap(~category, scales = "free_x")
+
+  save_vector(p, outfile, width = 12, height = 6)
+  return(p)
+}
+
+# ----------------------------
+# Plot BrainSpan developmental enrichment as smoothed trajectory (vector output)
+# ----------------------------
+plot_bs_smooth <- function(df_long, stage_groups, group_colors,
+                           title = "", outfile = "smoothed.pdf",
+                           label_y = NULL) {
+
+  df_long$stage <- factor(df_long$stage, levels = unique(df_long$stage))
+  stage_levels <- levels(df_long$stage)
+  stage_to_num <- setNames(seq_along(stage_levels), stage_levels)
+
+  y_range    <- range(df_long$Z_score, na.rm = TRUE)
+  span       <- diff(y_range)
+  bar_height <- span * 0.10
+
+  shading_df <- purrr::map_df(names(stage_groups), function(g) {
+    xs <- stage_groups[[g]]
+    xs <- xs[xs %in% stage_levels]
+    if (!length(xs)) return(NULL)
+    tibble(
+      group = g,
+      xmin  = min(stage_to_num[xs]) - 0.5,
+      xmax  = max(stage_to_num[xs]) + 0.5
+    )
+  })
+  shading_df$fill <- group_colors[shading_df$group]
+
+  seg_h <- bar_height * 0.30
+  sig_df_dim <- df_long %>%
+    dplyr::group_by(stage, GWAS_Model) %>%
+    dplyr::summarise(sig = any(FDR < 0.05), .groups = "drop") %>%
+    dplyr::mutate(
+      xmin = stage_to_num[stage] - 0.5,
+      xmax = stage_to_num[stage] + 0.5,
+      idx  = dplyr::if_else(GWAS_Model == "Gf_u", 1, 0),
+      ymin = y_range[1] - bar_height - idx * seg_h,
+      ymax = ymin + seg_h
+    )
+
+  p <- ggplot(df_long, aes(x = stage, y = Z_score, colour = GWAS_Model, group = GWAS_Model)) +
+    geom_rect(
+      data = shading_df,
+      aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = group),
+      inherit.aes = FALSE, alpha = 0.12, colour = NA
+    ) +
+    geom_smooth(aes(fill = GWAS_Model), method = "loess", se = TRUE, size = 1, alpha = 0.20) +
+    geom_rect(
+      data = dplyr::filter(sig_df_dim, sig),
+      aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = GWAS_Model),
+      inherit.aes = FALSE, colour = NA
+    ) +
+    scale_color_manual(values = my_colors, name = "Cognitive Dimension") +
+    scale_fill_manual(values = c(my_colors, group_colors), guide = "none") +
+    labs(
+      title = title, x = "", y = "Z-statistic (β / SE)",
+      caption = "Bars below the x-axis indicate FDR < 0.05. Bar color corresponds to the significantly enriched dimension."
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "right",
+      legend.title = element_text(size = 10),
+      plot.caption = element_text(hjust = 0, size = 8)
+    )
+
+  top_y <- if (is.null(label_y)) y_range[2] + bar_height * 0.05 else label_y
+  p <- p + expand_limits(y = c(y_range[1] - bar_height * 1.6, max(y_range[2], top_y)))
+
+  label_df <- shading_df %>%
+    dplyr::mutate(
+      x = (xmin + xmax) / 2,
+      y = top_y,
+      label = group
+    )
+
+  p <- p + geom_text(
+    data = label_df,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    colour = "grey30",
+    size = 3
+  )
+
+  save_vector(p, outfile, width = 12, height = 6)
+  return(p)
+}
+
+# ----------------------------
+# Alternative line+point trajectory plot (vector output)
+# ----------------------------
+plot_trajectory <- function(df_long, title, outfile) {
+  p <- ggplot(df_long, aes(x = stage, y = Z_score, color = GWAS_Model, group = GWAS_Model)) +
+    geom_line() +
+    geom_point(aes(shape = Significant), size = 2) +
+    scale_shape_manual(values = c("FALSE" = 16, "TRUE" = 17)) +
+    theme_minimal() +
+    labs(
+      title = title,
+      x = "",
+      y = "Z-statistic (β / SE)",
+      shape = "FDR < 0.05"
+    ) +
+    scale_color_manual(values = my_colors) +
+    theme(
+      axis.text.x = element_text(size = 5, angle = 45, hjust = 1),
+      plot.margin = margin(t = 1, r = 1, b = 1, l = 7, unit = "cm")
+    )
+
+  save_vector(p, outfile, width = 13, height = 6)
+  return(p)
+}
+
+# ----------------------------
+# Prepare long data
+# ----------------------------
+bs_age_long  <- format_bs_long(bs_age, bs_age_order)
+bs_dev_long  <- format_bs_long(bs_dev, bs_dev_order)
+GTEx_30_long <- format_gtex_long(GTEx_30)
+GTEx_54_long <- format_gtex_long(GTEx_54)
+
+# ----------------------------
+# Groupings + colors
+# ----------------------------
+bs_age_groups <- list(
+  Prenatal    = c("8_pcw","9_pcw","12_pcw","13_pcw","16_pcw","17_pcw","19_pcw","21_pcw","24_pcw","26_pcw","37_pcw"),
+  Infancy     = c("4_mos","10_mos","1_yrs","2_yrs"),
+  Childhood   = c("3_yrs","4_yrs","8_yrs"),
+  Adolescence = c("11_yrs","13_yrs","15_yrs","18_yrs","19_yrs"),
+  Adulthood   = c("21_yrs","23_yrs","30_yrs","36_yrs","37_yrs","40_yrs")
+)
+
+bs_dev_groups <- list(
+  Prenatal    = c("Early_prenatal","Early_mid-prenatal","Late_mid-prenatal","Late_prenatal"),
+  Infancy     = c("Early_infancy","Late_infancy"),
+  Childhood   = c("Early_childhood","Late_childhood"),
+  Adolescence = c("Adolescence"),
+  Adulthood   = c("Young_adulthood","Middle_adulthood")
+)
+
+bs_group_colors <- c(
+  Prenatal    = "#FFB6C1",
+  Infancy     = "#ADD8E6",
+  Childhood   = "#90EE90",
+  Adolescence = "#FFD700",
+  Adulthood   = "#D3D3D3"
+)
+
+# ----------------------------
+# Make and save plots as VECTOR files
+# Choose .pdf (best for Illustrator), or .eps / .svg
+# ----------------------------
+
+plot_bs_smooth(
+  bs_age_long, stage_groups = bs_age_groups, group_colors = bs_group_colors,
+  title = "Developmental Epoch (BrainSpan age groups)",
+  outfile = "Gf_u_VS_Gc_u/BS_age_MAGMA_Gf_u_vs_Gc_u_smoothed.svg",
+  label_y = 4
+)
+
+plot_bs_smooth(
+  bs_dev_long, stage_groups = bs_dev_groups, group_colors = bs_group_colors,
+  title = "Developmental Window (BrainSpan developmental windows)",
+  outfile = "Gf_u_VS_Gc_u/BS_dev_MAGMA_Gf_u_vs_Gc_u_smoothed.svg",
+  label_y = 7.5
+)
+
+plot_gtex_bar(
+  GTEx_30, top_n = 15, facet = FALSE,
+  title = "GTEx General (Top 15 tissues by Gc_u Z-statistic)",
+  outfile = "Gf_u_VS_Gc_u/GTEx30_MAGMA_Gf_u_vs_Gc_u_barplot_top15.svg"
+)
+
+plot_gtex_bar(
+  GTEx_54, top_n = 15, facet = TRUE,
+  title = "GTEx Detailed (Top 15 tissues by Gc_u Z-statistic)",
+  outfile = "Gf_u_VS_Gc_u/GTEx54_MAGMA_Gf_u_vs_Gc_u_barplot_top15.svg"
+)
+
+# Example EPS/SVG alternatives:
+# plot_gtex_bar(GTEx_30, top_n = 15, facet = FALSE,
+#               title = "GTEx General (Top 15 tissues by Gc_u Z-statistic)",
+#               outfile = "Gf_u_VS_Gc_u/GTEx30_MAGMA_Gf_u_vs_Gc_u_barplot_top15.eps")
+#
+# plot_bs_smooth(bs_age_long, stage_groups = bs_age_groups, group_colors = bs_group_colors,
+#                title = "Developmental Epoch (BrainSpan age groups)",
+#                outfile = "Gf_u_VS_Gc_u/BS_age_MAGMA_Gf_u_vs_Gc_u_smoothed.svg",
+#                label_y = 4)
+
+## Pearsonn correlations
+# Compute for GTEx_30
+compute_pearson_corr(GTEx_30, "Z_Gf_u", "Z_Gc_u", "GTEx_30")
+
+# Compute for GTEx_54
+compute_pearson_corr(GTEx_54, "Z_Gf_u", "Z_Gc_u", "GTEx_54")
+
+# Compute for BS_age
+compute_pearson_corr(bs_age, "Z_Gf_u", "Z_Gc_u", "BS_age")
+
+# Compute for BS_dev
+compute_pearson_corr(bs_dev, "Z_Gf_u", "Z_Gc_u", "BS_dev")
+
+
+```
+
+
+
+
+
+
+
+```{r}
+compare_magma_files <- function(file_gf, file_gc, label, output_prefix) {
+  gf <- load_magma_tissue(file_gf, "Gf_u")
+  gc <- load_magma_tissue(file_gc, "Gc_u")
+
+  combined <- full_join(gc, gf, by = "VARIABLE", suffix = c("_Gc_u", "_Gf_u")) %>%
+    mutate(
+      BETA_diff = BETA_Gf_u - BETA_Gc_u,
+
+      # Nominal significance (uncorrected P)
+      significance_nominal = case_when(
+        P_Gf_u < 0.05 & P_Gc_u >= 0.05 ~ "Gf_u only",
+        P_Gc_u < 0.05 & P_Gf_u >= 0.05 ~ "Gc_u only",
+        P_Gc_u < 0.05 & P_Gf_u < 0.05 ~ "Shared",
+        TRUE ~ "NS"
+      ),
+
+      # FDR-corrected significance (used in plots)
+      significance_fdr = case_when(
+        FDR_Gf_u < 0.05 & FDR_Gc_u >= 0.05 ~ "Gf_u only",
+        FDR_Gc_u < 0.05 & FDR_Gf_u >= 0.05 ~ "Gc_u only",
+        FDR_Gc_u < 0.05 & FDR_Gf_u < 0.05 ~ "Shared",
+        TRUE ~ "NS"
+      )
+    )
+
+  write_tsv(combined, paste0(output_prefix, "_MAGMA_comparison.tsv"))
+
+  # Scatterplot based on FDR significance
+  p <- ggplot(combined, aes(x = BETA_Gc_u, y = BETA_Gf_u, color = significance_fdr)) +
+    geom_point(size = 2) +
+    geom_abline(linetype = "dashed", color = "gray") +
+    labs(title = paste0(label, ": Gf_u vs Gc_u"),
+         x = "MAGMA BETA (Gc_u)", y = "MAGMA BETA (Gf_u)",
+         color = "Significance\n(FDR < 0.05)") +
+    scale_color_manual(values = c("Shared" = "purple", "Gf_u only" = "blue", "Gc_u only" = "red", "NS" = "gray")) +
+    theme_minimal()
+
+  ggsave(paste0(output_prefix, "_scatterplot.png"), plot = p, width = 8, height = 6, dpi = 300)
+}
+
+
+## Function to plot single-factor FDR barplot
+plot_magma_fdr <- function(file_path, factor_label, out_file) {
+  df <- read_table(file_path, comment = "#", show_col_types = FALSE) %>%
+    mutate(sig = ifelse(FDR < 0.05, "FDR < 0.05", "NS")) %>%
+    arrange(BETA) %>%
+    mutate(VARIABLE = factor(VARIABLE, levels = VARIABLE))
+
+  p <- ggplot(df, aes(x = BETA, y = VARIABLE, fill = sig)) +
+    geom_col() +
+    labs(
+      title = paste0("MAGMA BETA (", factor_label, ") by Tissue/Stage"),
+      x = "MAGMA BETA", y = "Tissue/Stage",
+      fill = "Significance\n(FDR < 0.05)"
+    ) +
+    scale_fill_manual(values = c("FDR < 0.05" = "red", "NS" = "gray")) +
+    theme_minimal()
+
+  ggsave(out_file, plot = p, width = 8, height = 6, dpi = 300)
+}
+
+
+```
+
+```{r}
+
+# Run all comparisons
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+  "GTEx (Detailed)",
+  "GTEx_detailed"
+)
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+  "GTEx (General)",
+  "GTEx_general"
+)
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+  "BrainSpan (Age bins)",
+  "BS_age"
+)
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+  "BrainSpan (Developmental windows)",
+  "BS_dev"
+)
+
+
+```
+
+```{r barplots_from_tsv, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+# Function to plot barplot using FDR column already present in combined MAGMA comparison .tsv files
+plot_fdr_from_tsv <- function(tsv_path, factor = "Gc_u", output_file = "barplot.png") {
+  df <- read_tsv(tsv_path, show_col_types = FALSE)
+  
+  fdr_col <- ifelse(factor == "Gc_u", "FDR_Gc_u", "FDR_Gf_u")
+  beta_col <- ifelse(factor == "Gc_u", "BETA_Gc_u", "BETA_Gf_u")
+  
+  df <- df %>%
+    mutate(sig = ifelse(.data[[fdr_col]] < 0.05, "FDR < 0.05", "NS")) %>%
+    arrange(.data[[beta_col]]) %>%
+    mutate(VARIABLE = factor(VARIABLE, levels = VARIABLE))
+
+  p <- ggplot(df, aes(x = .data[[beta_col]], y = VARIABLE, fill = sig)) +
+    geom_col() +
+    labs(
+      title = paste0("MAGMA BETA (", factor, ") by Tissue/Stage"),
+      x = "MAGMA BETA", y = "Tissue/Stage",
+      fill = "Significance\n(FDR < 0.05)"
+    ) +
+    scale_fill_manual(values = c("FDR < 0.05" = "red", "NS" = "gray")) +
+    theme_minimal()
+
+  ggsave(output_file, plot = p, width = 8, height = 6, dpi = 300)
+}
+
+# Define files and factors
+comparisons <- list(
+  list(file = "GTEx_detailed_MAGMA_comparison.tsv", prefix = "GTEx_detailed"),
+  list(file = "GTEx_general_MAGMA_comparison.tsv", prefix = "GTEx_general"),
+  list(file = "BS_age_MAGMA_comparison.tsv", prefix = "BS_age"),
+  list(file = "BS_dev_MAGMA_comparison.tsv", prefix = "BS_dev")
+)
+
+# Generate plots for each factor
+for (comp in comparisons) {
+  for (fac in c("Gc_u", "Gf_u")) {
+    out_plot <- paste0(comp$prefix, "_FDR_barplot_", fac, ".png")
+    plot_fdr_from_tsv(comp$file, factor = fac, output_file = out_plot)
+  }
+}
+```
+
+
+
+```{r}
+
+### GTEx (Detailed)
+#*Load, process, save and plot data*
+  
+  compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_avg_log2TPM.gsa.out",
+  "GTEx (Detailed)",
+  "GTEx_detailed"
+)
+
+### GTEx (General)
+#*Load, process, save and plot data*
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_gtex_v8_ts_general_avg_log2TPM.gsa.out",
+  "GTEx (General)",
+  "GTEx_general"
+)
+
+### BrainSpan (Age bins)
+#*Load, process, save and plot data*
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_bs_age_avg_log2RPKM.gsa.out",
+  "BrainSpan (Age bins)",
+  "BS_age"
+)
+
+### BrainSpan (Developmental windows)
+#*Load, process, save and plot data*
+
+compare_magma_files(
+  "FUMA_Results_Gf_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+  "FUMA_Results_Gc_u/magma_exp_bs_dev_avg_log2RPKM.gsa.out",
+  "BrainSpan (Developmental windows)",
+  "BS_dev"
+)
+
+```
+
+
+## eQTL Summary (PsychENCODE/BrainSeq)
+
+```{r}
+eqtl_gf <- read_tsv("FUMA_Results_Gf_u/eqtl.txt")
+eqtl_gc <- read_tsv("FUMA_Results_Gc_u/eqtl.txt")
+
+eqtl_summary_gf <- eqtl_gf %>% filter(FDR < 0.05) %>% count(symbol) %>% mutate(Factor = "Gf_u")
+eqtl_summary_gc <- eqtl_gc %>% filter(FDR < 0.05) %>% count(symbol) %>% mutate(Factor = "Gc_u")
+eqtl_summary <- bind_rows(eqtl_summary_gf, eqtl_summary_gc)
+
+eqtl_summary %>% ggplot(aes(x = Factor)) +
+  geom_bar(stat = "count", aes(fill = Factor)) +
+  labs(title = "Number of eQTL-mapped genes with FDR < 0.05")
+
+write_tsv(eqtl_summary, "Gf_u_VS_Gc_u/eqtl_summary_Gf_u_VS_Gc_u.tsv" )
+
+```
+
+## Chromatin Interaction Targets (PsychENCODE)
+
+```{r}
+ci_gf <- read_tsv("FUMA_Results_Gf_u/ci.txt") %>%
+  filter(genes != "N0") %>%
+  separate_rows(genes, sep = ":") %>%
+  count(genes) %>% mutate(Factor = "Gf_u")
+
+ci_gc <- read_tsv("FUMA_Results_Gc_u/ci.txt") %>%
+  filter(genes != "N0") %>%
+  separate_rows(genes, sep = ":") %>%
+  count(genes) %>% mutate(Factor = "Gc_u")
+
+ci_summary <- bind_rows(ci_gf, ci_gc)
+
+ci_summary %>% ggplot(aes(x = Factor)) +
+  geom_bar(stat = "count", aes(fill = Factor)) +
+  labs(title = "Number of genes mapped via PsychENCODE chromatin interactions")
+
+write_tsv(eqtl_summary, "Gf_u_VS_Gc_u/Chromatin_interactions_summary_Gf_u_VS_Gc_u.tsv" )
+
+```
+
+## SNP Overlap with PsychENCODE Enhancers
+
+```{r}
+annot_bed_gf <- read_tsv("FUMA_Results_Gf_u/annot.bed")
+annot_bed_summary_gf <- annot_bed_gf %>% count(dataset) %>% mutate(Factor = "Gf_u")
+
+annot_bed_gc <- read_tsv("FUMA_Results_Gc_u/annot.bed")
+annot_bed_summary_gc <- annot_bed_gc %>% count(dataset) %>% mutate(Factor = "Gc_u")
+
+annot_bed_summary <- bind_rows(annot_bed_summary_gf, annot_bed_summary_gc)
+
+write_tsv(eqtl_summary, "Gf_u_VS_Gc_u/annot_bed_Gf_u_VS_Gc_u.tsv" )
+
+## Proportions
+
+annot_gf <- read_tsv("annot_Gf_u.bed", col_names = c("chr", "start", "end", "dataset"))
+annot_gc <- read_tsv("annot_Gc_u.bed", col_names = c("chr", "start", "end", "dataset"))
+
+# Add Factor column
+annot_gf <- annot_gf %>% mutate(Factor = "Gf_u")
+annot_gc <- annot_gc %>% mutate(Factor = "Gc_u")
+
+# Combine and summarize
+annot_combined <- bind_rows(annot_gf, annot_gc)
+
+# Count by dataset and factor
+annot_counts <- annot_combined %>%
+  count(dataset, Factor)
+
+# Calculate proportions
+annot_proportions <- annot_counts %>%
+  group_by(Factor) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+# OPTIONAL: Save summary table
+write_tsv(annot_proportions, "Gf_u_VS_Gc_u/annot_bed_proportion_summary.tsv")
+
+
+# Read the summary table
+df <- read_tsv("Gf_u_VS_Gc_u/annot_bed_proportion_summary.tsv")
+
+# Plot barplot of proportions
+ggplot(df, aes(x = dataset, y = proportion, fill = Factor)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  labs(
+    title = "Functional Annotation Proportions: Gf_u vs Gc_u",
+    x = "Annotation Dataset",
+    y = "Proportion of Annotated SNPs",
+    fill = "Factor"
+  ) +
+  scale_fill_manual(values = c("Gf_u" = "skyblue", "Gc_u" = "salmon")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
+
+## Developmental Gene Expression Comparison (BrainSpan)
+
+```{r}
+# Load BrainSpan expression matrix
+load_expression_matrix <- function(factor, file = "bs_dev_avg_log2RPKM_exp.txt") {
+  read_tsv(paste0("FUMA_Results_", factor, "/FUMA_gene2func/", file), show_col_types = FALSE)
+}
+
+# Generate, save heatmaps, and export scaled matrices
+plot_top_gene_heatmaps <- function(top_n = 30, output_dir = "heatmaps") {
+  dir.create(output_dir, showWarnings = FALSE)
+
+  # Load gene lists and expression matrices
+  genes_gf <- read_tsv("FUMA_Results_Gf_u/genes.txt", show_col_types = FALSE)
+  genes_gc <- read_tsv("FUMA_Results_Gc_u/genes.txt", show_col_types = FALSE)
+  gf_expr <- load_expression_matrix("Gf_u")
+  gc_expr <- load_expression_matrix("Gc_u")
+
+  # Define dev stages
+  dev_stages <- c(
+    "Early_prenatal", "Early_mid-prenatal", "Late_mid-prenatal", "Late_prenatal",
+    "Early_infancy", "Late_infancy", "Early_childhood", "Late_childhood",
+    "Adolescence", "Young_adulthood", "Middle_adulthood"
+  )
+  dev_labels <- c("Prenatal", "Prenatal", "Prenatal", "Prenatal",
+                  "Infancy", "Infancy", "Childhood", "Childhood",
+                  "Adolescence", "Adulthood", "Adulthood")
+  row_annot <- data.frame(Stage = dev_labels)
+  rownames(row_annot) <- dev_stages
+  stage_colors <- list(Stage = c(Prenatal = "#FFB6C1", Infancy = "#ADD8E6",
+                                 Childhood = "#90EE90", Adolescence = "#FFD700",
+                                 Adulthood = "#D3D3D3"))
+
+  # Top gene symbols
+  top_genes_gf <- genes_gf %>% arrange(minGwasP) %>% slice(1:top_n) %>% pull(symbol)
+  top_genes_gc <- genes_gc %>% arrange(minGwasP) %>% slice(1:top_n) %>% pull(symbol)
+
+  # Process and scale
+  prep_expr_data <- function(df, genes) {
+    mat <- df %>%
+      filter(symbol %in% genes) %>%
+      distinct(symbol, .keep_all = TRUE) %>%
+      column_to_rownames("symbol") %>%
+      select(all_of(dev_stages))
+
+    mat <- mat[apply(mat, 1, function(x) all(is.finite(x))), ]
+    mat_scaled <- scale(t(mat))  # scale rows = timepoints
+
+    mat_scaled <- mat_scaled[apply(mat_scaled, 1, function(x) all(is.finite(x))), , drop = FALSE]
+    mat_scaled <- mat_scaled[, apply(mat_scaled, 2, function(x) all(is.finite(x))), drop = FALSE]
+    return(mat_scaled)
+  }
+
+  # Save both heatmaps and matrix
+  export_and_plot <- function(mat, title, filename_prefix) {
+    if (nrow(mat) < 2 || ncol(mat) < 2) {
+      warning(paste("Skipping:", title, "— not enough data"))
+      return()
+    }
+
+    # Save matrix
+    write_tsv(as_tibble(t(mat), rownames = "Stage"),
+              file.path(output_dir, paste0(filename_prefix, "_scaled_expression.tsv")))
+
+    # Save plot
+    pheatmap(mat,
+             annotation_row = row_annot[rownames(mat), , drop = FALSE],
+             annotation_colors = stage_colors,
+             main = title,
+             fontsize_col = 6,
+             filename = file.path(output_dir, paste0(filename_prefix, "_heatmap.png")),
+             width = 10, height = 6)
+  }
+
+  # Prepare and export
+  gf_gf_data <- prep_expr_data(gf_expr, top_genes_gf)
+  gc_gf_data <- prep_expr_data(gc_expr, top_genes_gf)
+  gc_gc_data <- prep_expr_data(gc_expr, top_genes_gc)
+  gf_gc_data <- prep_expr_data(gf_expr, top_genes_gc)
+
+  export_and_plot(gf_gf_data, "Gf_u Top Genes - Gf_u Expression", "Gf_u_top_genes_Gf_u")
+  export_and_plot(gc_gf_data, "Gf_u Top Genes - Gc_u Expression", "Gf_u_top_genes_Gc_u")
+  export_and_plot(gc_gc_data, "Gc_u Top Genes - Gc_u Expression", "Gc_u_top_genes_Gc_u")
+  export_and_plot(gf_gc_data, "Gc_u Top Genes - Gf_u Expression", "Gc_u_top_genes_Gf_u")
+}
+
+# Run the pipeline
+plot_top_gene_heatmaps(top_n = 200, output_dir = "heatmaps")
+
+```
+
+# Venn Diagram overlap genes
+``` {R}
+
+library(tidyverse)
+library(VennDiagram)
+
+# Read gene lists
+gf_genes <- read_tsv("FUMA_Results_Gf_u/genes.txt", show_col_types = FALSE) %>% pull(symbol)
+gc_genes <- read_tsv("FUMA_Results_Gc_u/genes.txt", show_col_types = FALSE) %>% pull(symbol)
+
+# Identify overlapping and unique genes
+common_genes <- intersect(gf_genes, gc_genes)
+unique_gf_genes <- setdiff(gf_genes, gc_genes)
+unique_gc_genes <- setdiff(gc_genes, gf_genes)
+
+# Print to console
+cat("Number of Gf_u genes:", length(gf_genes), "\n")
+cat("Number of Gc_u genes:", length(gc_genes), "\n")
+cat("Number of overlapping genes:", length(common_genes), "\n")
+cat("Overlapping genes:\n", paste(common_genes, collapse = ", "), "\n")
+
+# Save overlapping genes list
+write_tsv(tibble(overlapping_genes = common_genes), "overlapping_genes_Gf_u_Gc_u.tsv")
+
+# Generate Venn Diagram
+venn.plot <- venn.diagram(
+  x = list(Gf_u = gf_genes, Gc_u = gc_genes),
+  filename = "venn_Gf_u_vs_Gc_u.png",
+  imagetype = "png",
+  height = 1000,
+  width = 1000,
+  resolution = 300,
+  fill = c("#FF9999", "#9999FF"),
+  alpha = 0.5,
+  cat.cex = 1.2,
+  cex = 1.9,
+  main = "Overlap of Gf_u and Gc_u Top Genes"
+)
+
+
+```
+
+
+## Compare Z Scores Clusters
+``` {R}
+
+
+# Load scaled expression matrices
+gf_scaled <- read_tsv("heatmaps/Gf_u_top_genes_Gf_u_scaled_expression.tsv") %>%
+  column_to_rownames("Stage") %>%
+  t() %>%
+  as.data.frame()
+
+gc_scaled <- read_tsv("heatmaps/Gc_u_top_genes_Gc_u_scaled_expression.tsv") %>%
+  column_to_rownames("Stage") %>%
+  t() %>%
+  as.data.frame()
+
+
+
+# Identify overlapping genes
+common_genes <- intersect(rownames(gf_scaled), rownames(gc_scaled))
+
+# Filter only overlapping genes
+gf_scaled_overlap <- gf_scaled[common_genes, ]
+gc_scaled_overlap <- gc_scaled[common_genes, ]
+# Melt to long format
+gf_long <- melt(as.matrix(gf_scaled_overlap)) %>% rename(gene = Var1, stage = Var2, zscore_gf = value)
+gc_long <- melt(as.matrix(gc_scaled_overlap)) %>% rename(gene = Var1, stage = Var2, zscore_gc = value)
+
+# Merge
+expr_long <- left_join(gf_long, gc_long, by = c("gene", "stage"))
+
+# Group by stage
+summary_df <- expr_long %>%
+  group_by(stage) %>%
+  summarize(
+    mean_zscore_gf = mean(zscore_gf, na.rm = TRUE),
+    mean_zscore_gc = mean(zscore_gc, na.rm = TRUE),
+    delta = mean_zscore_gf - mean_zscore_gc,
+    .groups = "drop"
+  )
+
+# Save table
+write_tsv(summary_df, "delta_expression_summary_overlap_only.tsv")
+
+# Plot delta expression per stage
+p <- ggplot(summary_df, aes(x = stage, y = delta, group = 1)) +
+  geom_line(linewidth = 1.2, color = "black") +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(
+    title = "Δ Z-statisticd Expression (Gf_u - Gc_u) for Overlapping Genes",
+    y = "Delta Expression (Z)", x = "Developmental Stage"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("delta_expression_overlap_only.png", plot = p, width = 9, height = 6, dpi = 300)
+
+```
+
+
+## DEG Enrichment Summary Plots
+
+```{r}
+# Load and label DEG enrichment results
+load_deg_table <- function(factor, file) {
+  read_tsv(paste0("FUMA_Results_", factor, "/FUMA_gene2func/", file), show_col_types = FALSE) %>%
+    mutate(Factor = factor)
+}
+
+# List of DEG result files
+deg_files <- c("bs_age_DEG.txt", "bs_dev_DEG.txt", "gtex_v8_ts_DEG.txt", "gtex_v8_ts_general_DEG.txt")
+
+# Iterate and analyze each file
+for (deg_file in deg_files) {
+  
+  gf_deg <- load_deg_table("Gf_u", deg_file)
+  gc_deg <- load_deg_table("Gc_u", deg_file)
+  
+  deg_combined <- bind_rows(gf_deg, gc_deg)
+  
+  # Detect the correct label column automatically
+  label_col <- if ("VARIABLE" %in% colnames(deg_combined)) {
+    "VARIABLE"
+  } else if ("label" %in% colnames(deg_combined)) {
+    "label"
+  } else if ("GeneSet" %in% colnames(deg_combined)) {
+    "GeneSet"
+  } else {
+    stop(paste("Could not find a known stage/tissue column in", deg_file))
+  }
+  
+  # Save combined table
+  output_table <- paste0("deg_combined_", gsub(".txt", "", deg_file), ".tsv")
+  write_tsv(deg_combined, output_table)
+  
+  # Plot enrichment comparison
+  p <- deg_combined %>%
+    ggplot(aes_string(x = label_col, y = "-log10(adjP)", fill = "Factor")) +  # Use 'adjP' (which is FDR)
+    geom_bar(stat = "identity", position = "dodge") +
+    coord_flip() +
+    labs(
+      title = paste("DEG Enrichment -", deg_file),
+      y = "-log10(FDR)",
+      x = "Tissue/Stage"
+    ) +
+    theme_minimal() +
+    theme(axis.text.y = element_text(size = 8))
+  
+  # Save plot
+  output_plot <- paste0("DEG_enrichment_", gsub(".txt", "", deg_file), ".png")
+  ggsave(output_plot, plot = p, width = 10, height = 6, dpi = 300)
+}
+
+```
+
+## Next Steps
+- Add TWAS/FUSION gene prioritization.
+- Compare MAGMA gene-set enrichment (`magma.gsa.out`).
